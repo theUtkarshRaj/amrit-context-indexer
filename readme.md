@@ -21,9 +21,11 @@ before any server wrapper is added.
 
 ## What this is NOT
 
-- **Not a complete MCP server.** There is no stdio transport, no tool
-  manifest, and nothing Claude or any other LLM client can connect to yet.
-  That wrapper is week-1 scope in the DMP timeline.
+- **A working stdio MCP server is now included.** `mcp_server.py` is a
+  FastMCP server with four tools (`search_repos`, `list_repos`,
+  `repo_details`, `get_readme`) and README resources exposed at
+  `amrit://repo/{name}/readme`, connectable from Claude Code and Cursor.
+  `search_repos` filters out archived repos by default (`include_archived=False`).
 
 - **Not an embeddings-based semantic search system.** Queries match on
   keywords, not meaning. Searching "patient registration flow" will not
@@ -56,6 +58,61 @@ what queries actually need it.
 bugs in search quality are easy to spot and fix. Wrapping a broken retrieval
 layer as an MCP server just hides the bugs behind a protocol boundary. The CLI
 proves the layer works; the MCP wrapper is then a thin shell around it.
+
+---
+
+## Architecture
+
+### Data flow (run once to build the index)
+
+```
+GitHub API
+    |
+    v
+fetch_repos.py  -->  data/repos.json   (74 repos, metadata + README text)
+    |
+    v
+indexer.py      -->  data/index.db     (SQLite FTS5 full-text index)
+```
+
+**fetch_repos.py** — paginates the GitHub API to collect all 74 public PSMRI
+repos, fetches and base64-decodes each README, and writes everything to
+`repos.json`. Reads `GITHUB_TOKEN` from `.env`.
+
+**indexer.py** — reads `repos.json` and loads it into a SQLite FTS5 virtual
+table (`repos_fts`). Text fields (name, description, README, etc.) are
+tokenized for BM25 full-text search. The `archived` field is stored as
+`UNINDEXED` — kept in the row for retrieval and filtering but not tokenized.
+
+### Query layer (two interfaces over the same index)
+
+```
+data/index.db
+      |
+      |-->  search.py       (CLI for humans)
+      |
+      -->  mcp_server.py   (MCP server for AI clients)
+```
+
+**search.py** — command-line tool. Runs `WHERE repos_fts MATCH ? ORDER BY
+bm25()` against the index and prints ranked results. Also has `--list`
+(repos grouped by language) and `--stats` (language breakdown, recently
+updated) modes that read `repos.json` directly.
+
+**mcp_server.py** — the same queries wrapped as MCP tools over stdio,
+connectable from Claude Code and Cursor. Four tools:
+
+| Tool | What it does |
+|------|--------------|
+| `search_repos(query, top_k, include_archived)` | BM25-ranked FTS5 search; filters archived repos by default (`include_archived=False`) |
+| `list_repos(language)` | All repos, optionally filtered by language |
+| `repo_details(name)` | Full metadata for one repo by name |
+| `get_readme(name)` | Full README text for one repo |
+
+README content is also exposed as MCP resources at `amrit://repo/{name}/readme`.
+
+The `include_archived` flag in `search_repos` reads the stored `archived`
+field from the index — no extra API call, no re-fetch.
 
 ---
 
@@ -94,11 +151,23 @@ python indexer.py
 python search.py "your query here"
 python search.py --list
 python search.py --stats
+
+# Run the MCP server (speaks MCP over stdio — connect from Claude Code or Cursor)
+python mcp_server.py
 ```
 
 ---
 
 ## Example output
+
+### MCP demo — Claude Code calling search_repos
+
+Two plain-English queries answered by the agent via the `search_repos` tool,
+with no bash or file access — just the MCP server over stdio.
+
+![MCP demo — Claude Code calling amrit-context-indexer tools](docs/mcp-demo.png)
+
+### CLI output
 
 **`python search.py "beneficiary"`**
 
@@ -134,10 +203,12 @@ Things that are visible in the data and will matter for the MCP server design:
   of the corpus. The health platform front-ends are Angular/TypeScript; most
   back-end services are Spring Boot Java.
 
-- **Archived repos are not filtered out.** A significant number of repos follow
-  a `Name-ARCHIVED` pattern (e.g., `TM-UI-ARCHIVED` alongside `TM-UI`,
-  `HWC-UI-ARCHIVED` alongside `HWC-UI`). An MCP tool should be aware of this
-  so it does not recommend an archived repo as the active one.
+- **Archived repos are not filtered out of the raw data.** A significant number
+  of repos follow a `Name-ARCHIVED` pattern (e.g., `TM-UI-ARCHIVED` alongside
+  `TM-UI`, `HWC-UI-ARCHIVED` alongside `HWC-UI`). The `archived` field is
+  stored in the FTS5 index (UNINDEXED) and powers the `include_archived` flag
+  in `search_repos`, which defaults to `False` so archived repos are excluded
+  from results unless explicitly requested.
 
 - **Two distinct sub-domains share the org.** Most repos are AMRIT health
   platform modules (HWC, MMU, TM, ECD, Helpline, etc.). A separate cluster
@@ -156,7 +227,7 @@ Things that are visible in the data and will matter for the MCP server design:
 | Proposal acceptance criterion | Status in this prototype |
 |-------------------------------|--------------------------|
 | Index PSMRI repositories for context retrieval | Done — 74 repos, README text, FTS5 search |
-| Expose retrieval as an MCP tool | Not yet — CLI only; MCP wrapper is week-1 DMP work |
+| Expose retrieval as an MCP tool | Done — `mcp_server.py`, stdio transport, four-tool manifest, README resources |
 | Semantic / embedding-based search | Not yet — FTS5 keyword search only; v2 scope |
 | JIRA and Confluence connectors | Not yet — named in proposal, out of scope here |
 
@@ -189,6 +260,7 @@ amrit-context-indexer/
 ├── fetch_repos.py      # Fetches all PSMRI repos + READMEs via GitHub API
 ├── indexer.py          # Builds the FTS5 SQLite index from repos.json
 ├── search.py           # CLI: keyword search, --list, --stats
+├── mcp_server.py       # stdio MCP server wrapping the FTS5 search (4 tools + README resources)
 ├── requirements.txt    # requests, python-dotenv
 ├── .env.example        # Template — copy to .env and add your token
 ├── .gitignore

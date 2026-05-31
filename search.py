@@ -12,6 +12,11 @@ import sqlite3
 import sys
 from datetime import datetime
 
+# Windows terminals default to cp1252; README content can contain characters
+# outside that range, so force UTF-8 for stdout.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 DB_PATH = os.path.join("data", "index.db")
 REPOS_PATH = os.path.join("data", "repos.json")
 
