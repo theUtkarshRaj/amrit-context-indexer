@@ -85,6 +85,7 @@ def extract_repo_fields(repo: dict, readme: str | None) -> dict:
         "html_url": repo["html_url"],
         "default_branch": repo.get("default_branch"),
         "updated_at": repo.get("updated_at"),
+        "archived": repo.get("archived", False),
         "readme": readme,
     }
 
