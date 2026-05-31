@@ -30,7 +30,8 @@ def create_fts_table(conn: sqlite3.Connection) -> None:
             description,
             language,
             html_url,
-            readme
+            readme,
+            archived UNINDEXED
         )
     """)
 
@@ -41,7 +42,7 @@ def index_repos(conn: sqlite3.Connection, repos: list[dict]) -> None:
     for i, repo in enumerate(repos, start=1):
         print(f"Indexing {i} of {total}: {repo['name']}")
         conn.execute(
-            "INSERT INTO repos_fts VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO repos_fts VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 repo.get("name") or "",
                 repo.get("full_name") or "",
@@ -49,6 +50,7 @@ def index_repos(conn: sqlite3.Connection, repos: list[dict]) -> None:
                 repo.get("language") or "",
                 repo.get("html_url") or "",
                 repo.get("readme") or "",   # null readme → empty string
+                repo.get("archived", False),
             ),
         )
 
