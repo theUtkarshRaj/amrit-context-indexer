@@ -8,6 +8,7 @@ MCP protocol wire format.
 
 import json
 import os
+import re
 import sqlite3
 import sys
 
@@ -44,6 +45,16 @@ def _snippet(text: str, max_len: int = 300) -> str:
     return text[:max_len] + "..." if len(text) > max_len else text
 
 
+def _sanitize_fts_query(query: str) -> str | None:
+    tokens = re.findall(r"\w+", query)
+    if not tokens:
+        return None
+    # Double-quoting each token makes FTS5 treat it as a literal phrase,
+    # neutralising operators like AND OR NOT ( ) * : that would otherwise
+    # cause a syntax error or mis-parse.
+    return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -51,19 +62,25 @@ def _snippet(text: str, max_len: int = 300) -> str:
 @mcp.tool()
 def search_repos(query: str, top_k: int = 5, include_archived: bool = False) -> list[dict]:
     """BM25-ranked FTS5 search over repo names, descriptions, and READMEs."""
+    safe_query = _sanitize_fts_query(query)
+    if safe_query is None:
+        return []
     archive_filter = "" if include_archived else "AND archived = 0"
-    with _db() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT name, language, html_url, description, readme, archived
-            FROM repos_fts
-            WHERE repos_fts MATCH ?
-            {archive_filter}
-            ORDER BY bm25(repos_fts)
-            LIMIT ?
-            """,
-            (query, top_k),
-        ).fetchall()
+    try:
+        with _db() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT name, language, html_url, description, readme, archived
+                FROM repos_fts
+                WHERE repos_fts MATCH ?
+                {archive_filter}
+                ORDER BY bm25(repos_fts)
+                LIMIT ?
+                """,
+                (safe_query, top_k),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
 
     results = []
     for row in rows:

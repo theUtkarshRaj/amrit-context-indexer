@@ -8,6 +8,7 @@ grouped repo browsing (list mode), and corpus statistics (stats mode).
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -34,6 +35,13 @@ def snippet(text: str, max_len: int = 200) -> str:
     return text[:max_len] + "..." if len(text) > max_len else text
 
 
+def _sanitize_fts_query(query: str) -> str | None:
+    tokens = re.findall(r"\w+", query)
+    if not tokens:
+        return None
+    return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+
+
 # --- Search mode ---
 
 def cmd_search(query: str) -> None:
@@ -41,18 +49,27 @@ def cmd_search(query: str) -> None:
     if not os.path.exists(DB_PATH):
         sys.exit(f"Index not found at {DB_PATH}. Run indexer.py first.")
 
-    with sqlite3.connect(DB_PATH) as conn:
-        # bm25() returns negative scores; ORDER BY ASC puts best match first
-        rows = conn.execute(
-            """
-            SELECT name, language, html_url, description, readme
-            FROM repos_fts
-            WHERE repos_fts MATCH ?
-            ORDER BY bm25(repos_fts)
-            LIMIT 5
-            """,
-            (query,),
-        ).fetchall()
+    safe_query = _sanitize_fts_query(query)
+    if safe_query is None:
+        print(f'No valid search terms in "{query}".')
+        return
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            # bm25() returns negative scores; ORDER BY ASC puts best match first
+            rows = conn.execute(
+                """
+                SELECT name, language, html_url, description, readme
+                FROM repos_fts
+                WHERE repos_fts MATCH ?
+                ORDER BY bm25(repos_fts)
+                LIMIT 5
+                """,
+                (safe_query,),
+            ).fetchall()
+    except sqlite3.OperationalError as e:
+        print(f"Search error: {e}")
+        return
 
     if not rows:
         print(f'No results for "{query}".')
