@@ -165,6 +165,10 @@ python mcp_server.py
 Two plain-English queries answered by the agent via the `search_repos` tool,
 with no bash or file access — just the MCP server over stdio.
 
+**Query: "tell me about beneficiary onboarding"**
+
+![MCP demo — beneficiary onboarding query](docs/beneficiary%20onboarding.png)
+
 ![MCP demo — Claude Code calling amrit-context-indexer tools](docs/mcp-demo.png)
 
 ### CLI output
@@ -176,14 +180,6 @@ with no bash or file access — just the MCP server over stdio.
 **`python search.py "1097 helpline"`**
 
 ![helpline search](docs/helpline.png)
-
-**`python search.py "spring boot"`**
-
-![spring boot search](docs/spring-boot.png)
-
-**`python search.py "telemedicine consultation"`**
-
-![telemedicine search](docs/telemedicine.png)
 
 **`python search.py --stats`**
 
